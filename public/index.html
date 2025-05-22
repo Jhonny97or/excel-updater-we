@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Excel Updater</title></head>
+<body>
+  <h1>Actualizador Inventario</h1>
+  <form id="f">
+    Mes (YYYY-MM): <input name="period" required><br><br>
+    Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
+    Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
+    <button>Procesar</button>
+  </form>
+  <script>
+    document.querySelector("#f").onsubmit = async e => {
+      e.preventDefault();
+      let fd = new FormData(e.target);
+      let r  = await fetch("/api/process.py", { method:"POST", body:fd });
+      if(!r.ok) return alert("Error: "+r.statusText);
+      let b = await r.blob(),
+          u = URL.createObjectURL(b),
+          a = document.createElement("a");
+      a.href = u;
+      a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(u);
+    };
+  </script>
+</body>
+</html>
