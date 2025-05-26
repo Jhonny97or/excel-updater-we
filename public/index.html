@@ -1,141 +1,112 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <title>Excel Updater – OneDrive</title>
-  <script src="https://alcdn.msauth.net/browser/2.36.0/js/msal-browser.min.js"></script>
-  <style>
-    body{font-family:sans-serif;max-width:640px;margin:auto;padding:2rem}
-    button{margin:.5rem 0;padding:.4rem .8rem}
-    #log{background:#f7f7f7;border:1px solid #ddd;
-         max-height:160px;overflow:auto;font-size:.85rem;padding:.5rem}
-    input[type=text]{width:160px;padding:.3rem}
-    select{padding:.3rem}
-  </style>
+<meta charset="utf-8">
+<title>Actualizador Inventario (OneDrive)</title>
+<style>
+ body{font-family:system-ui;margin:2rem} progress{width:100%;height:18px}
+ #log{background:#f5f5f5;border:1px solid #ccc;padding:.5rem;height:90px;overflow:auto}
+</style>
+<script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+<script>
+/*  1) Config MSAL desde variables de entorno  */
+window.EXCEL_UP_CFG = {
+  clientId : "{{NEXT_PUBLIC_AZURE_CLIENT_ID}}",
+  authority: "https://login.microsoftonline.com/{{NEXT_PUBLIC_AZURE_TENANT_ID}}",
+  scopes   : ["Files.Read.All"]
+};
+</script>
 </head>
 <body>
-  <h2>Actualizador Inventario (OneDrive)</h2>
+<h2>Actualizador Inventario (OneDrive)</h2>
 
-  <!-- ①  login / logout -->
-  <div id="auth">
-    <button id="btnLogin">Iniciar sesión</button>
-  </div>
+<button id="loginBtn">Iniciar sesión</button>
+<button id="logoutBtn" style="display:none">Cerrar sesión</button>
+<br><br>
 
-  <!-- ②  selector de archivos + periodo -->
-  <div id="form" style="display:none">
-    <p>
-      Mes a cerrar <input id="period" type="text" placeholder="YYYY-MM" required
-                         value="2025-04" />
-    </p>
+<form id="f" style="display:none">
+  Mes (YYYY-MM):
+  <input name="period" required value="2025-04"><br><br>
+  Inventario (.xlsx):
+  <input type="file" name="inv" accept=".xlsx" required><br><br>
+  Ventas (.xlsx):
+  <input type="file" name="ven" accept=".xlsx" required><br><br>
+  <button>Procesar</button>
+</form>
 
-    <p>
-      <button id="pickInv">Elegir <strong>Inventario</strong> (.xlsx)</button><br/>
-      <span id="invName"></span>
-    </p>
-
-    <p>
-      <button id="pickVen">Elegir <strong>Ventas</strong> (.xlsx)</button><br/>
-      <span id="venName"></span>
-    </p>
-
-    <button id="run" disabled>Procesar y Descargar</button>
-  </div>
-
-  <h4>Log</h4>
-  <pre id="log"></pre>
+<br>
+<progress id="bar" value="0" max="100" style="display:none"></progress>
+<pre id="log"></pre>
 
 <script>
-/* ───────── config MSAL ───────── */
-const msalConfig = {
-  auth: {
-    clientId: "f68cd599-2aae-467b-a1dc-b02bd4466add",   // AZURE_CLIENT_ID
-    authority: "https://login.microsoftonline.com/040d06ad-d773-4f67-a7fa-24a88cce22e4", // AZURE_TENANT_ID
-    redirectUri: window.location.origin
+const log = msg => { const l=document.getElementById('log'); l.textContent += msg+"\n"; l.scrollTop=l.scrollHeight; };
+
+const msalInstance = new msal.PublicClientApplication({
+  auth: { clientId: EXCEL_UP_CFG.clientId, authority: EXCEL_UP_CFG.authority },
+  cache:{ cacheLocation:"sessionStorage" }
+});
+const loginRequest = { scopes: EXCEL_UP_CFG.scopes };
+
+const loginBtn  = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const form      = document.getElementById('f');
+const bar       = document.getElementById('bar');
+
+async function ensureLogin(){
+  let acc = msalInstance.getAllAccounts()[0];
+  if(!acc){
+    acc = (await msalInstance.loginPopup(loginRequest)).account;
+    log("✅ Login: "+acc.username);
+    loginBtn.style.display="none";
+    logoutBtn.style.display="";
+    form.style.display="";
   }
-};
-const msalObj = new msal.PublicClientApplication(msalConfig);
-const graphScopes = ["Files.Read.All"];      // permiso delegado
-
-const log  = txt => { const l=document.querySelector("#log");
-                      l.textContent += txt+"\n"; l.scrollTop=l.scrollHeight; };
-
-let account, accessToken;
-let driveItems = {inv:null, ven:null};
-
-/* ───────── helpers Graph ───────── */
-async function ensureToken() {
-  if (accessToken) return accessToken;
-  const res = await msalObj.acquireTokenSilent({
-      account, scopes: graphScopes
-  }).catch(async _ => {
-      return msalObj.acquireTokenPopup({scopes:graphScopes});
-  });
-  accessToken = res.accessToken;
-  return accessToken;
+  return acc;
 }
 
-async function pickFile(kind){      // usa Graph `search(q=*.xlsx)` + prompt simple
-  await ensureToken();
-  const q = prompt(`Nombre del archivo ${kind} (.xlsx) tal como está en OneDrive:`);
-  if(!q) return;
-
-  const r = await fetch(
-      `https://graph.microsoft.com/v1.0/me/drive/root/search(q='${encodeURIComponent(q)}')?select=id,name,webUrl`,
-      { headers:{Authorization:`Bearer ${accessToken}`}});
-  if(!r.ok){ log("❌ Error búsqueda Graph"); return; }
-  const data = await r.json();
-  if(!data.value.length){ log("No encontrado"); return; }
-
-  // coge el 1º resultado
-  driveItems[kind] = data.value[0];
-  document.querySelector(`#${kind}Name`).textContent = data.value[0].name;
-  log(`✓ ${kind} seleccionado: ${data.value[0].name}`);
-
-  // habilita ejecutar si ambos están
-  document.querySelector("#run").disabled = !(driveItems.inv && driveItems.ven);
-}
-
-/* ───────── eventos UI ───────── */
-document.querySelector("#btnLogin").onclick = async () => {
-  await msalObj.loginPopup({scopes:graphScopes});
-  account = msalObj.getAllAccounts()[0];
-  if(!account){ alert("Login cancelado"); return;}
-  document.querySelector("#auth").innerHTML =
-        `<span>Hola, ${account.username}</span>
-         <button id="logout">Salir</button>`;
-  document.querySelector("#form").style.display="block";
-  document.querySelector("#logout").onclick = ()=>msalObj.logoutPopup();
+loginBtn.onclick = ensureLogin;
+logoutBtn.onclick = () => {
+  msalInstance.logoutPopup();
+  loginBtn.style.display="";
+  logoutBtn.style.display="none";
+  form.style.display="none";
 };
 
-document.querySelector("#pickInv").onclick = ()=>pickFile("inv");
-document.querySelector("#pickVen").onclick = ()=>pickFile("ven");
+form.onsubmit = async ev => {
+  ev.preventDefault();
+  const acc = await ensureLogin();
+  if(!acc) return;
 
-document.querySelector("#run").onclick = async () =>{
-  const period = document.querySelector("#period").value.trim();
-  if(!period) return alert("Periodo requerido (YYYY-MM)");
+  const fd = new FormData(form);
+  bar.value = 0; bar.style.display=""; log("Subiendo archivos… 0 %");
 
-  log("⏳ Descargando archivos y procesando…");
-
-  const body = JSON.stringify({
-     period,
-     invId: driveItems.inv.id,
-     venId: driveItems.ven.id,
-     token: accessToken
-  });
-  const r = await fetch("/api/process.py", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body
-  });
-  if(!r.ok){ const t=await r.text(); return alert("Error: "+t); }
-  const blob = await r.blob(),
-        url  = URL.createObjectURL(blob),
-        a    = document.createElement("a");
-  a.href=url;
-  a.download=`TblInventario_actualizado_${period}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(url);
-  log("✅ Archivo descargado");
+  /* XMLHttpRequest para ver progreso */
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/process");
+  xhr.upload.onprogress = e=>{
+    if(e.lengthComputable){
+      bar.value = e.loaded/e.total*100;
+      log(`Subiendo… ${bar.value.toFixed(0)} %`);
+    }
+  };
+  xhr.responseType = "blob";
+  xhr.onload = ()=>{
+    if(xhr.status!==200){
+      alert("Error servidor:\n"+xhr.responseText);
+      log("❌ "+xhr.responseText);
+      bar.style.display="none"; return;
+    }
+    log("Procesado ✔ – descargando archivo…");
+    const url = URL.createObjectURL(xhr.response);
+    const a   = document.createElement("a");
+    a.href=url;
+    a.download=`TblInventario_actualizado_${fd.get("period")}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    bar.style.display="none";
+  };
+  xhr.onerror = ()=>alert("Error de red");
+  xhr.send(fd);
 };
 </script>
 </body>
