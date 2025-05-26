@@ -1,95 +1,84 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <title>Actualizador Inventario (OneDrive)</title>
-  <!-- ✅ MSAL desde CDN correcto -->
-  <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
-  <style>body{font-family:sans-serif;max-width:700px;margin:40px auto}</style>
+  <meta charset="UTF-8" />
+  <title>Actualizador Inventario</title>
 </head>
 <body>
   <h1>Actualizador Inventario (OneDrive)</h1>
 
-  <!-- ——— login ——— -->
-  <button id="loginBtn">Iniciar sesión</button>
-  <span id="user"></span>
-  <hr>
-
-  <!-- ——— formulario de carga ——— -->
-  <form id="f" style="display:none">
-    Mes (YYYY-MM):
-    <input name="period" required><br><br>
-
-    Inventario XLSX:
-    <input type="file" name="inv" accept=".xlsx" required><br><br>
-
-    Ventas XLSX:
-    <input type="file" name="ven" accept=".xlsx" required><br><br>
-
-    <progress id="p" value="0" max="100" style="width:100%"></progress><br>
-    <button>Procesar</button>
+  <form id="f">
+    Mes (YYYY-MM): <input name="period" required /><br /><br />
+    Inventario:    <input type="file" name="inv" accept=".xlsx" required /><br /><br />
+    Ventas:        <input type="file" name="ven" accept=".xlsx" required /><br /><br />
+    <button type="submit">Procesar</button>
   </form>
 
-  <!-- ——— script principal ——— -->
-  <script type="module">
-    /* 1. carga config (clientId & authority) */
-    import "/api/config.js";
+  <p id="status"></p>
 
-    if (!window.EXCEL_UP_CFG)
-      throw new Error("MSAL config missing – revisa /api/config.js");
+  <!-- ①  Config de MSAL generada en runtime -->
+  <script src="/api/config.js"></script>
 
-    const msal = new msaljs.PublicClientApplication({
-      auth: window.EXCEL_UP_CFG
+  <!-- ②  MSAL desde el CDN oficial -->
+  <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
+
+  <script>
+    if (!window.EXCEL_UP_CFG) {
+      document.getElementById("status").textContent =
+        "⚠️ Configuración MSAL ausente. Revisa /api/config.js.";
+      throw new Error("MSAL config missing");
+    }
+
+    // Instancia MSAL
+    const msal = new msal.PublicClientApplication({
+      auth: {
+        clientId:  window.EXCEL_UP_CFG.clientId,
+        authority: window.EXCEL_UP_CFG.authority,
+        redirectUri: window.location.origin
+      }
     });
 
-    const loginBtn = document.getElementById("loginBtn");
-    const form     = document.getElementById("f");
-    const userSpan = document.getElementById("user");
-    const prog     = document.getElementById("p");
-
-    loginBtn.onclick = async () => {
+    // ───── helper de login interactivo
+    async function ensureToken() {
+      const req = { scopes: window.EXCEL_UP_CFG.scopes };
       try {
-        const r = await msal.loginPopup({
-          scopes: ["Files.Read.All", "User.Read"]
-        });
-        loginBtn.style.display = "none";
-        form.style.display = "block";
-        userSpan.textContent = r.account.username;
-      } catch (e) {
-        alert("Login error\n" + e);
+        const result = await msal.acquireTokenSilent(req);
+        return result.accessToken;
+      } catch {
+        const result = await msal.acquireTokenPopup(req);
+        return result.accessToken;
       }
-    };
+    }
 
-    /* 2. envío de archivos + barra de progreso */
-    form.onsubmit = async e => {
+    // ───── envía el formulario
+    document.getElementById("f").onsubmit = async (e) => {
       e.preventDefault();
-      const fd = new FormData(form);
+      const st = document.getElementById("status");
+      st.textContent = "🔐 Iniciando sesión…";
 
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/process.py");
-      xhr.upload.onprogress = ev => {
-        if (ev.lengthComputable) {
-          prog.value = (ev.loaded / ev.total) * 100;
-        }
-      };
-      xhr.responseType = "blob";
-      xhr.onload = () => {
-        if (xhr.status !== 200) {
-          alert("Error: " + xhr.responseText);
-          prog.value = 0;
-          return;
-        }
-        const blob = xhr.response;
+      try {
+        const token = await ensureToken();
+        st.textContent = "⬆️ Subiendo archivos…";
+
+        const fd = new FormData(e.target);
+        fd.append("token", token);           // se envía al backend
+
+        const r = await fetch("/api/process.py", { method: "POST", body: fd });
+        if (!r.ok) throw new Error(await r.text());
+
+        st.textContent = "⬇️ Descargando resultado…";
+        const blob = await r.blob();
         const url  = URL.createObjectURL(blob);
-        const a    = document.createElement("a");
-        a.href = url;
-        a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-        a.click();
-        URL.revokeObjectURL(url);
-        prog.value = 0;
-      };
-      xhr.onerror = () => alert("Error de red");
-      xhr.send(fd);
+        const a    = Object.assign(document.createElement("a"), {
+          href: url,
+          download: `TblInventario_actualizado_${fd.get("period")}.xlsx`
+        });
+        a.click(); URL.revokeObjectURL(url);
+        st.textContent = "✅ Terminado";
+      } catch (err) {
+        st.textContent = "❌ " + err.message;
+        console.error(err);
+      }
     };
   </script>
 </body>
