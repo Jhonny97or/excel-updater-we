@@ -1,84 +1,114 @@
-
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<title>Excel Updater</title>
-<style>
- #progress-container { display:none; margin-top:1em; }
- #progress-bar { width:100%; }
- #status { margin-top:0.5em; font-style:italic; }
-</style>
+  <meta charset="UTF-8">
+  <title>Excel Updater</title>
+  <style>
+    #progress-container { display:none; margin-top:1em; }
+    #progress-bar { width:100%; }
+    /* cuando esté procesando, la barra se pinta en modo indeterminado */
+    #progress-bar.indet {
+      /* quitamos el valor y le damos animación CSS */
+      appearance: none;
+      -webkit-appearance: none;
+      background: linear-gradient(to right, #4caf50 30%, transparent 30%) no-repeat;
+      background-size: 25% 100%;
+      animation: move 1s linear infinite;
+    }
+    @keyframes move {
+      to { background-position: 100% 0; }
+    }
+    #status { margin-top:0.5em; font-style:italic; }
+  </style>
 </head>
 <body>
-<h1>Actualizador Inventario</h1>
-<form id="f">
- Mes (YYYY-MM): <input name="period" required><br><br>
- Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
- Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
- <button type="submit">Procesar</button>
-</form>
+  <h1>Actualizador Inventario</h1>
+  <form id="f">
+    Mes (YYYY-MM): <input name="period" required><br><br>
+    Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
+    Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
+    <button type="submit">Procesar</button>
+  </form>
 
-<div id="progress-container">
- <progress id="progress-bar" value="0" max="100"></progress>
- <div id="status">Preparando subida…</div>
-</div>
+  <div id="progress-container">
+    <progress id="progress-bar" value="0" max="100"></progress>
+    <div id="status">Preparando subida…</div>
+  </div>
 
-<script>
- const form = document.querySelector("#f");
- const progressContainer = document.getElementById("progress-container");
- const progressBar = document.getElementById("progress-bar");
- const statusText = document.getElementById("status");
+  <script>
+    const form = document.querySelector("#f");
+    const progressContainer = document.getElementById("progress-container");
+    const progressBar = document.getElementById("progress-bar");
+    const statusText = document.getElementById("status");
 
- form.addEventListener("submit", e => {
-   e.preventDefault();
-   const fd = new FormData(form);
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const fd = new FormData(form);
 
-   const xhr = new XMLHttpRequest();
-   // ← Aquí el endpoint sin .py
-   xhr.open("POST", "/api/process");
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/process");  // sin .py
+      xhr.responseType = "arraybuffer";
 
-   progressContainer.style.display = "block";
-   statusText.textContent = "Subiendo archivos…";
+      // mostramos la barra y el texto
+      progressContainer.style.display = "block";
+      progressBar.removeAttribute("class"); // quitamos indet si existía
+      progressBar.value = 0;
+      statusText.textContent = "Subiendo archivos…";
 
-   xhr.upload.onprogress = evt => {
-     if (evt.lengthComputable) {
-       const pct = Math.round(evt.loaded / evt.total * 100);
-       progressBar.value = pct;
-       statusText.textContent = `Subida ${pct}%`;
-     }
-   };
+      // progreso de subida
+      xhr.upload.onprogress = evt => {
+        if (evt.lengthComputable) {
+          const pct = Math.round(evt.loaded / evt.total * 100);
+          progressBar.value = pct;
+          statusText.textContent = `Subida ${pct}%`;
+        }
+      };
 
-   // Al arrancar la descarga de la respuesta (headers recibidos)
-   xhr.onreadystatechange = () => {
-     if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
-       statusText.textContent = "Servidor recibió datos. Procesando…";
-       progressBar.value = 100;
-     }
-     if (xhr.readyState === XMLHttpRequest.DONE) {
-       if (xhr.status === 200) {
-         statusText.textContent = "Generando archivo…";
-         const blob = new Blob([xhr.response], {
-           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-         });
-         const url = URL.createObjectURL(blob);
-         const a = document.createElement("a");
-         a.href = url;
-         a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-         document.body.appendChild(a);
-         a.click();
-         a.remove();
-         URL.revokeObjectURL(url);
-         statusText.textContent = "¡Listo!";
-       } else {
-         statusText.textContent = "Error: " + xhr.responseText;
-       }
-     }
-   };
+      let dots = 0, dotInterval;
 
-   xhr.responseType = "arraybuffer";
-   xhr.send(fd);
- });
-</script>
+      xhr.onreadystatechange = () => {
+        // en cuanto recibimos los headers del servidor…
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+          // pasamos a modo “procesando” indeterminado
+          statusText.textContent = "Servidor recibió datos. Procesando";
+          progressBar.removeAttribute("value");
+          progressBar.classList.add("indet");
+
+          // animamos unos puntitos en el texto
+          dotInterval = setInterval(() => {
+            dots = (dots + 1) % 4;
+            statusText.textContent = "Procesando" + ".".repeat(dots);
+          }, 500);
+        }
+
+        // cuando termina todo…
+        if (xhr.readyState === XMLHttpRequest.DONE) {
+          clearInterval(dotInterval);
+          progressBar.classList.remove("indet");
+          progressBar.value = 100;
+          if (xhr.status === 200) {
+            statusText.textContent = "Generando archivo…";
+            const blob = new Blob([xhr.response], {
+              type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            statusText.textContent = "¡Listo!";
+          } else {
+            statusText.textContent = "Error: " + xhr.responseText;
+          }
+        }
+      };
+
+      xhr.send(fd);
+    });
+  </script>
 </body>
 </html>
+
