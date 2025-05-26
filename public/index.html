@@ -1,49 +1,37 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Excel Updater</title>
-</head>
-<body>
-  <!-- ⬇️ IMPORTANTE: debe ir lo más arriba posible -->
-  <script src="/api/config.js"></script>
+<script type="module">
+  import { PublicClientApplication } from "https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/+esm";
 
-  <h1>Actualizador Inventario</h1>
-  <form id="f">
-    Mes (YYYY-MM): <input name="period" required><br><br>
-    Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
-    Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
-    <button>Procesar</button>
-  </form>
+  // ─── ①  lee config que inyectamos desde /api/config.js ───
+  const { clientId, authority } = window.EXCEL_UP_CFG;
+  if (!clientId || !authority) {
+    console.error("MSAL config missing!", window.EXCEL_UP_CFG);
+    alert("Error interno: configuración MSAL ausente.");
+    throw new Error("No MSAL config");
+  }
 
-  <div id="status"></div> <!-- pequeño área de estado -->
+  // ─── ②  instancia MSAL ───
+  const msal = new PublicClientApplication({
+    auth: { clientId, authority },
+    cache: { cacheLocation: "localStorage" }   // opcional
+  });
 
-  <script>
-    const $status = document.getElementById('status');
+  // ─── ③  función de login interactivo ───
+  async function signIn() {
+    try {
+      const resp = await msal.loginPopup({
+        scopes: ["Files.Read.All", "User.Read"]
+      });
+      console.log("LOGIN OK", resp);
+      document.getElementById("status").textContent =
+        "✅ Sesión iniciada como " + resp.account.username;
+      // Aquí podrías guardar el accessToken si vas a usar Graph.
+    } catch (err) {
+      console.error(err);
+      alert("Error de login:\n" + err.message);
+    }
+  }
 
-    document.getElementById("f").onsubmit = async e => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      $status.textContent = "Subiendo archivos…";
-
-      const r = await fetch("/api/process.py", { method:"POST", body:fd });
-
-      if (!r.ok) {
-        $status.textContent = "Error: " + (await r.text());
-        return;
-      }
-      $status.textContent = "Procesando en el servidor…";
-
-      const blob = await r.blob();
-      const url  = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-      link.click();
-      URL.revokeObjectURL(url);
-      $status.textContent = "✅ Archivo generado";
-    };
-  </script>
-</body>
-</html>
+  // botón de login
+  document.getElementById("btnLogin").onclick = signIn;
+</script>
 
