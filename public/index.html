@@ -5,37 +5,50 @@
   <title>Excel Updater</title>
   <style>
     body { font-family: sans-serif; padding: 2rem; }
-    progress { width: 100%; height: 1.5rem; }
-    .indet { /* estilo para barra indeterminada */ background: repeating-linear-gradient(
+    progress { width: 100%; height: 1.5rem; margin-top: .5rem; }
+    .indet { 
+      /* barra “indeterminada” para procesamiento */
+      background: repeating-linear-gradient(
         -45deg, #ccc, #ccc 10px, #ddd 10px, #ddd 20px
-      ); }
+      );
+    }
+    #statusText { margin-top: .5rem; }
   </style>
 </head>
 <body>
   <h1>Actualizador Inventario</h1>
   <form id="f">
     Mes (YYYY-MM): <input name="period" required><br><br>
-    Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
-    Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
+    Inventario: <input type="file" id="inv" name="inv" accept=".xlsx" required><br><br>
+    Ventas:     <input type="file" id="ven" name="ven" accept=".xlsx" required><br><br>
     <button>Procesar</button>
   </form>
 
-  <div id="status">
-    <progress id="pr" value="0" max="100"></progress>
-    <div id="statusText"></div>
-  </div>
+  <progress id="pr" value="0" max="100"></progress>
+  <div id="statusText"></div>
 
   <script>
     const form       = document.querySelector("#f");
+    const invInput   = document.querySelector("#inv");
+    const venInput   = document.querySelector("#ven");
     const pr         = document.querySelector("#pr");
     const statusText = document.querySelector("#statusText");
+    const MAX_BYTES  = 30 * 1024 * 1024; // 30 MB
 
     form.addEventListener("submit", e => {
       e.preventDefault();
-      const fd = new FormData(form);
+
+      // 1) validar tamaño
+      const invFile = invInput.files[0];
+      const venFile = venInput.files[0];
+      if ((invFile.size + venFile.size) > MAX_BYTES) {
+        return alert("Los archivos son demasiado grandes. Límite combinado: 30 MB.");
+      }
+
+      const fd  = new FormData(form);
       const xhr = new XMLHttpRequest();
 
-      // 1) Subida: progreso real
+      // progreso de subida
       xhr.upload.onprogress = evt => {
         if (evt.lengthComputable) {
           pr.classList.remove("indet");
@@ -45,21 +58,21 @@
         }
       };
 
-      // 2) Cuando envío completo → pasa a procesar
+      // subida completa → procesando
       xhr.upload.onloadend = () => {
         pr.classList.add("indet");
         statusText.textContent = "Servidor recibió datos. Procesando datos…";
       };
 
-      // 3) Descarga: nada hasta que termine el servidor
+      // respuesta del servidor
       xhr.responseType = "blob";
       xhr.onreadystatechange = () => {
         if (xhr.readyState === XMLHttpRequest.DONE) {
           pr.classList.remove("indet");
           if (xhr.status === 200) {
+            // descarga
             pr.value = pr.max;
             statusText.textContent = "¡Listo! Descargando...";
-            // descarga automática
             const blob = xhr.response;
             const url  = URL.createObjectURL(blob);
             const a    = document.createElement("a");
@@ -69,16 +82,19 @@
             a.click();
             URL.revokeObjectURL(url);
             a.remove();
+          } else if (xhr.status === 413) {
+            statusText.textContent = "Error: los archivos exceden el límite permitido del servidor.";
           } else {
-            statusText.textContent = `Error: ${xhr.status} ${xhr.statusText}`;
+            statusText.textContent = `Error ${xhr.status}: ${xhr.statusText}`;
           }
         }
       };
 
-      // 4) Lanza la petición
+      // lanzar petición
       xhr.open("POST", "/api/process.py");
       xhr.send(fd);
     });
   </script>
 </body>
 </html>
+
