@@ -1,30 +1,32 @@
 // api/config.js
-/**
- * Devuelve la configuración MSAL al front-end
- * (los valores se insertan desde las variables de entorno de Vercel)
- */
+//
+// Devuelve un fragmento <script> con la configuración MSAL que el
+// front-end necesita para iniciar sesión (flujo delegado contra OneDrive).
 
 export default function handler(req, res) {
+  // 1)  Variables de entorno que configuraste en Vercel
   const { AZURE_CLIENT_ID, AZURE_TENANT_ID } = process.env;
 
+  // 2)  Comprobación rápida: si faltan, devolvemos error visible en consola
   if (!AZURE_CLIENT_ID || !AZURE_TENANT_ID) {
     return res
       .status(500)
-      .setHeader("Content-Type", "text/plain")
-      .end("❌ Falta configurar AZURE_CLIENT_ID o AZURE_TENANT_ID en Vercel");
+      .send(
+        "❌ Falta configurar AZURE_CLIENT_ID y/o AZURE_TENANT_ID en Vercel → Settings → Environment Variables."
+      );
   }
 
-  /* authority v2: https://login.microsoftonline.com/<tenant>/ */
-  const authority =
-    "https://login.microsoftonline.com/" + AZURE_TENANT_ID + "/";
+  // 3)  Construimos la autoridad de login (v2.0)
+  const authority = `https://login.microsoftonline.com/${AZURE_TENANT_ID}/`;
+
+  // 4)  Serializamos los datos dentro de window.EXCEL_UP_CFG para que
+  //     el HTML pueda leerlos antes de inicializar MSAL.
+  const payload = {
+    clientId: AZURE_CLIENT_ID,
+    authority
+  };
 
   res
-    .status(200)
     .setHeader("Content-Type", "application/javascript")
-    .end(
-      `window.EXCEL_UP_CFG = ${JSON.stringify({
-        clientId: AZURE_CLIENT_ID,
-        authority,
-      })};`
-    );
+    .send(`window.EXCEL_UP_CFG = ${JSON.stringify(payload)};`);
 }
