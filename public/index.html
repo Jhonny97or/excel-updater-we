@@ -1,100 +1,143 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Excel Updater</title>
+  <meta charset="UTF-8" />
+  <title>Excel Updater – OneDrive</title>
+  <script src="https://alcdn.msauth.net/browser/2.36.0/js/msal-browser.min.js"></script>
   <style>
-    body { font-family: sans-serif; padding: 2rem; }
-    progress { width: 100%; height: 1.5rem; margin-top: .5rem; }
-    .indet { 
-      /* barra “indeterminada” para procesamiento */
-      background: repeating-linear-gradient(
-        -45deg, #ccc, #ccc 10px, #ddd 10px, #ddd 20px
-      );
-    }
-    #statusText { margin-top: .5rem; }
+    body{font-family:sans-serif;max-width:640px;margin:auto;padding:2rem}
+    button{margin:.5rem 0;padding:.4rem .8rem}
+    #log{background:#f7f7f7;border:1px solid #ddd;
+         max-height:160px;overflow:auto;font-size:.85rem;padding:.5rem}
+    input[type=text]{width:160px;padding:.3rem}
+    select{padding:.3rem}
   </style>
 </head>
 <body>
-  <h1>Actualizador Inventario</h1>
-  <form id="f">
-    Mes (YYYY-MM): <input name="period" required><br><br>
-    Inventario: <input type="file" id="inv" name="inv" accept=".xlsx" required><br><br>
-    Ventas:     <input type="file" id="ven" name="ven" accept=".xlsx" required><br><br>
-    <button>Procesar</button>
-  </form>
+  <h2>Actualizador Inventario (OneDrive)</h2>
 
-  <progress id="pr" value="0" max="100"></progress>
-  <div id="statusText"></div>
+  <!-- ①  login / logout -->
+  <div id="auth">
+    <button id="btnLogin">Iniciar sesión</button>
+  </div>
 
-  <script>
-    const form       = document.querySelector("#f");
-    const invInput   = document.querySelector("#inv");
-    const venInput   = document.querySelector("#ven");
-    const pr         = document.querySelector("#pr");
-    const statusText = document.querySelector("#statusText");
-    const MAX_BYTES  = 200 * 1024 * 1024; // 30 MB
+  <!-- ②  selector de archivos + periodo -->
+  <div id="form" style="display:none">
+    <p>
+      Mes a cerrar <input id="period" type="text" placeholder="YYYY-MM" required
+                         value="2025-04" />
+    </p>
 
-    form.addEventListener("submit", e => {
-      e.preventDefault();
+    <p>
+      <button id="pickInv">Elegir <strong>Inventario</strong> (.xlsx)</button><br/>
+      <span id="invName"></span>
+    </p>
 
-      // 1) validar tamaño
-      const invFile = invInput.files[0];
-      const venFile = venInput.files[0];
-      if ((invFile.size + venFile.size) > MAX_BYTES) {
-        return alert("Los archivos son demasiado grandes. Límite combinado: 30 MB.");
-      }
+    <p>
+      <button id="pickVen">Elegir <strong>Ventas</strong> (.xlsx)</button><br/>
+      <span id="venName"></span>
+    </p>
 
-      const fd  = new FormData(form);
-      const xhr = new XMLHttpRequest();
+    <button id="run" disabled>Procesar y Descargar</button>
+  </div>
 
-      // progreso de subida
-      xhr.upload.onprogress = evt => {
-        if (evt.lengthComputable) {
-          pr.classList.remove("indet");
-          pr.max   = evt.total;
-          pr.value = evt.loaded;
-          statusText.textContent = `Subiendo archivos… ${Math.round(evt.loaded/evt.total*100)}%`;
-        }
-      };
+  <h4>Log</h4>
+  <pre id="log"></pre>
 
-      // subida completa → procesando
-      xhr.upload.onloadend = () => {
-        pr.classList.add("indet");
-        statusText.textContent = "Servidor recibió datos. Procesando datos…";
-      };
+<script>
+/* ───────── config MSAL ───────── */
+const msalConfig = {
+  auth: {
+    clientId: "f68cd599-2aae-467b-a1dc-b02bd4466add",   // AZURE_CLIENT_ID
+    authority: "https://login.microsoftonline.com/040d06ad-d773-4f67-a7fa-24a88cce22e4", // AZURE_TENANT_ID
+    redirectUri: window.location.origin
+  }
+};
+const msalObj = new msal.PublicClientApplication(msalConfig);
+const graphScopes = ["Files.Read.All"];      // permiso delegado
 
-      // respuesta del servidor
-      xhr.responseType = "blob";
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === XMLHttpRequest.DONE) {
-          pr.classList.remove("indet");
-          if (xhr.status === 200) {
-            // descarga
-            pr.value = pr.max;
-            statusText.textContent = "¡Listo! Descargando...";
-            const blob = xhr.response;
-            const url  = URL.createObjectURL(blob);
-            const a    = document.createElement("a");
-            a.href     = url;
-            a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-            document.body.appendChild(a);
-            a.click();
-            URL.revokeObjectURL(url);
-            a.remove();
-          } else if (xhr.status === 413) {
-            statusText.textContent = "Error: los archivos exceden el límite permitido del servidor.";
-          } else {
-            statusText.textContent = `Error ${xhr.status}: ${xhr.statusText}`;
-          }
-        }
-      };
+const log  = txt => { const l=document.querySelector("#log");
+                      l.textContent += txt+"\n"; l.scrollTop=l.scrollHeight; };
 
-      // lanzar petición
-      xhr.open("POST", "/api/process.py");
-      xhr.send(fd);
-    });
-  </script>
+let account, accessToken;
+let driveItems = {inv:null, ven:null};
+
+/* ───────── helpers Graph ───────── */
+async function ensureToken() {
+  if (accessToken) return accessToken;
+  const res = await msalObj.acquireTokenSilent({
+      account, scopes: graphScopes
+  }).catch(async _ => {
+      return msalObj.acquireTokenPopup({scopes:graphScopes});
+  });
+  accessToken = res.accessToken;
+  return accessToken;
+}
+
+async function pickFile(kind){      // usa Graph `search(q=*.xlsx)` + prompt simple
+  await ensureToken();
+  const q = prompt(`Nombre del archivo ${kind} (.xlsx) tal como está en OneDrive:`);
+  if(!q) return;
+
+  const r = await fetch(
+      `https://graph.microsoft.com/v1.0/me/drive/root/search(q='${encodeURIComponent(q)}')?select=id,name,webUrl`,
+      { headers:{Authorization:`Bearer ${accessToken}`}});
+  if(!r.ok){ log("❌ Error búsqueda Graph"); return; }
+  const data = await r.json();
+  if(!data.value.length){ log("No encontrado"); return; }
+
+  // coge el 1º resultado
+  driveItems[kind] = data.value[0];
+  document.querySelector(`#${kind}Name`).textContent = data.value[0].name;
+  log(`✓ ${kind} seleccionado: ${data.value[0].name}`);
+
+  // habilita ejecutar si ambos están
+  document.querySelector("#run").disabled = !(driveItems.inv && driveItems.ven);
+}
+
+/* ───────── eventos UI ───────── */
+document.querySelector("#btnLogin").onclick = async () => {
+  await msalObj.loginPopup({scopes:graphScopes});
+  account = msalObj.getAllAccounts()[0];
+  if(!account){ alert("Login cancelado"); return;}
+  document.querySelector("#auth").innerHTML =
+        `<span>Hola, ${account.username}</span>
+         <button id="logout">Salir</button>`;
+  document.querySelector("#form").style.display="block";
+  document.querySelector("#logout").onclick = ()=>msalObj.logoutPopup();
+};
+
+document.querySelector("#pickInv").onclick = ()=>pickFile("inv");
+document.querySelector("#pickVen").onclick = ()=>pickFile("ven");
+
+document.querySelector("#run").onclick = async () =>{
+  const period = document.querySelector("#period").value.trim();
+  if(!period) return alert("Periodo requerido (YYYY-MM)");
+
+  log("⏳ Descargando archivos y procesando…");
+
+  const body = JSON.stringify({
+     period,
+     invId: driveItems.inv.id,
+     venId: driveItems.ven.id,
+     token: accessToken
+  });
+  const r = await fetch("/api/process.py", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body
+  });
+  if(!r.ok){ const t=await r.text(); return alert("Error: "+t); }
+  const blob = await r.blob(),
+        url  = URL.createObjectURL(blob),
+        a    = document.createElement("a");
+  a.href=url;
+  a.download=`TblInventario_actualizado_${period}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+  log("✅ Archivo descargado");
+};
+</script>
 </body>
 </html>
 
