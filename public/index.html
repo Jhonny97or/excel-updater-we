@@ -1,125 +1,96 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
   <meta charset="utf-8" />
   <title>Actualizador Inventario (OneDrive)</title>
-
-  <!-- un poco de estilo básico, opcional -->
-  <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:2rem;background:#f9fafb}
-    h1{margin-top:0}
-    label{display:block;margin:.7rem 0 .2rem}
-    input[type=file]{border:1px solid #ccc;padding:.3rem}
-    button{padding:.5rem 1rem;margin-top:1rem;cursor:pointer}
-    #status{margin-top:1rem;font-weight:bold}
-  </style>
-
-  <!-- ①  JS que inyecta window.EXCEL_UP_CFG con clientId / authority -->
-  <script src="/api/config.js"></script>
-
-  <!-- ②  MSAL v2 (browser) vía CDN ─ versión fija para reproducibilidad -->
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/dist/msal-browser.min.js"
-          integrity="sha384-ZyLIucDQnqPnA+eH0q9Ir4qPYCYnYwprLq1bMQFbmji6CKO3YO1Fb4Wzux6mzzth"
-          crossorigin="anonymous"></script>
+  <!-- ✅ MSAL desde CDN correcto -->
+  <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
+  <style>body{font-family:sans-serif;max-width:700px;margin:40px auto}</style>
 </head>
-
 <body>
   <h1>Actualizador Inventario (OneDrive)</h1>
 
-  <!-- ─── botón de login con MSAL ─── -->
-  <button type="button" id="btnLogin">Iniciar sesión</button>
-  <span id="status"> </span>
-
+  <!-- ——— login ——— -->
+  <button id="loginBtn">Iniciar sesión</button>
+  <span id="user"></span>
   <hr>
 
-  <!-- ─── formulario de subida ─── -->
-  <form id="formUp">
-    <label>Mes (YYYY-MM)
-      <input name="period" required placeholder="2025-04">
-    </label>
+  <!-- ——— formulario de carga ——— -->
+  <form id="f" style="display:none">
+    Mes (YYYY-MM):
+    <input name="period" required><br><br>
 
-    <label>Inventario (.xlsx)
-      <input type="file" name="inv" accept=".xlsx" required>
-    </label>
+    Inventario XLSX:
+    <input type="file" name="inv" accept=".xlsx" required><br><br>
 
-    <label>Ventas (.xlsx)
-      <input type="file" name="ven" accept=".xlsx" required>
-    </label>
+    Ventas XLSX:
+    <input type="file" name="ven" accept=".xlsx" required><br><br>
 
+    <progress id="p" value="0" max="100" style="width:100%"></progress><br>
     <button>Procesar</button>
   </form>
 
-  <!-- ③  Lógica MSAL + subida -->
+  <!-- ——— script principal ——— -->
   <script type="module">
-    import { PublicClientApplication } from "https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/+esm";
+    /* 1. carga config (clientId & authority) */
+    import "/api/config.js";
 
-    // ───── Config dinam. (inyectada por /api/config.js) ─────
-    const { clientId, authority } = window.EXCEL_UP_CFG || {};
-    if (!clientId || !authority) {
-      alert("Configuración MSAL ausente. Revisa /api/config.js.");
-      throw new Error("MSAL config missing");
-    }
+    if (!window.EXCEL_UP_CFG)
+      throw new Error("MSAL config missing – revisa /api/config.js");
 
-    // ───── MSAL ─────
-    const msal = new PublicClientApplication({
-      auth: { clientId, authority },
-      cache: { cacheLocation: "localStorage" }
+    const msal = new msaljs.PublicClientApplication({
+      auth: window.EXCEL_UP_CFG
     });
 
-    let accessToken = null;
+    const loginBtn = document.getElementById("loginBtn");
+    const form     = document.getElementById("f");
+    const userSpan = document.getElementById("user");
+    const prog     = document.getElementById("p");
 
-    async function signIn() {
+    loginBtn.onclick = async () => {
       try {
-        const resp = await msal.loginPopup({
+        const r = await msal.loginPopup({
           scopes: ["Files.Read.All", "User.Read"]
         });
-        accessToken = resp.accessToken;
-        document.getElementById("status").textContent =
-          `✅ Sesión: ${resp.account.username}`;
-      } catch (err) {
-        console.error(err);
-        alert("Error de login:\n" + err.message);
+        loginBtn.style.display = "none";
+        form.style.display = "block";
+        userSpan.textContent = r.account.username;
+      } catch (e) {
+        alert("Login error\n" + e);
       }
-    }
+    };
 
-    document.getElementById("btnLogin").onclick = signIn;
+    /* 2. envío de archivos + barra de progreso */
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
 
-    // ───── formulario de procesado ─────
-    document.getElementById("formUp").onsubmit = async ev => {
-      ev.preventDefault();
-      if (!accessToken) {
-        alert("Primero inicia sesión.");
-        return;
-      }
-
-      const fd = new FormData(ev.target);
-      // opcional: enviar el token al backend si vas a leer OneDrive ahí
-      // fd.append("msToken", accessToken);
-
-      // Información de progreso visual
-      document.getElementById("status").textContent = "⬆️ Subiendo…";
-
-      const res = await fetch("/api/process.py", { method:"POST", body: fd });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert("Error servidor:\n" + txt);
-        document.getElementById("status").textContent = "❌ Error";
-        return;
-      }
-
-      document.getElementById("status").textContent = "⬇️ Descargando resultado…";
-
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href = url;
-      a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      document.getElementById("status").textContent = "✅ Listo";
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/process.py");
+      xhr.upload.onprogress = ev => {
+        if (ev.lengthComputable) {
+          prog.value = (ev.loaded / ev.total) * 100;
+        }
+      };
+      xhr.responseType = "blob";
+      xhr.onload = () => {
+        if (xhr.status !== 200) {
+          alert("Error: " + xhr.responseText);
+          prog.value = 0;
+          return;
+        }
+        const blob = xhr.response;
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url;
+        a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        prog.value = 0;
+      };
+      xhr.onerror = () => alert("Error de red");
+      xhr.send(fd);
     };
   </script>
 </body>
 </html>
-
