@@ -1,37 +1,125 @@
-<script type="module">
-  import { PublicClientApplication } from "https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/+esm";
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Actualizador Inventario (OneDrive)</title>
 
-  // ─── ①  lee config que inyectamos desde /api/config.js ───
-  const { clientId, authority } = window.EXCEL_UP_CFG;
-  if (!clientId || !authority) {
-    console.error("MSAL config missing!", window.EXCEL_UP_CFG);
-    alert("Error interno: configuración MSAL ausente.");
-    throw new Error("No MSAL config");
-  }
+  <!-- un poco de estilo básico, opcional -->
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:2rem;background:#f9fafb}
+    h1{margin-top:0}
+    label{display:block;margin:.7rem 0 .2rem}
+    input[type=file]{border:1px solid #ccc;padding:.3rem}
+    button{padding:.5rem 1rem;margin-top:1rem;cursor:pointer}
+    #status{margin-top:1rem;font-weight:bold}
+  </style>
 
-  // ─── ②  instancia MSAL ───
-  const msal = new PublicClientApplication({
-    auth: { clientId, authority },
-    cache: { cacheLocation: "localStorage" }   // opcional
-  });
+  <!-- ①  JS que inyecta window.EXCEL_UP_CFG con clientId / authority -->
+  <script src="/api/config.js"></script>
 
-  // ─── ③  función de login interactivo ───
-  async function signIn() {
-    try {
-      const resp = await msal.loginPopup({
-        scopes: ["Files.Read.All", "User.Read"]
-      });
-      console.log("LOGIN OK", resp);
-      document.getElementById("status").textContent =
-        "✅ Sesión iniciada como " + resp.account.username;
-      // Aquí podrías guardar el accessToken si vas a usar Graph.
-    } catch (err) {
-      console.error(err);
-      alert("Error de login:\n" + err.message);
+  <!-- ②  MSAL v2 (browser) vía CDN ─ versión fija para reproducibilidad -->
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/dist/msal-browser.min.js"
+          integrity="sha384-ZyLIucDQnqPnA+eH0q9Ir4qPYCYnYwprLq1bMQFbmji6CKO3YO1Fb4Wzux6mzzth"
+          crossorigin="anonymous"></script>
+</head>
+
+<body>
+  <h1>Actualizador Inventario (OneDrive)</h1>
+
+  <!-- ─── botón de login con MSAL ─── -->
+  <button type="button" id="btnLogin">Iniciar sesión</button>
+  <span id="status"> </span>
+
+  <hr>
+
+  <!-- ─── formulario de subida ─── -->
+  <form id="formUp">
+    <label>Mes (YYYY-MM)
+      <input name="period" required placeholder="2025-04">
+    </label>
+
+    <label>Inventario (.xlsx)
+      <input type="file" name="inv" accept=".xlsx" required>
+    </label>
+
+    <label>Ventas (.xlsx)
+      <input type="file" name="ven" accept=".xlsx" required>
+    </label>
+
+    <button>Procesar</button>
+  </form>
+
+  <!-- ③  Lógica MSAL + subida -->
+  <script type="module">
+    import { PublicClientApplication } from "https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/+esm";
+
+    // ───── Config dinam. (inyectada por /api/config.js) ─────
+    const { clientId, authority } = window.EXCEL_UP_CFG || {};
+    if (!clientId || !authority) {
+      alert("Configuración MSAL ausente. Revisa /api/config.js.");
+      throw new Error("MSAL config missing");
     }
-  }
 
-  // botón de login
-  document.getElementById("btnLogin").onclick = signIn;
-</script>
+    // ───── MSAL ─────
+    const msal = new PublicClientApplication({
+      auth: { clientId, authority },
+      cache: { cacheLocation: "localStorage" }
+    });
+
+    let accessToken = null;
+
+    async function signIn() {
+      try {
+        const resp = await msal.loginPopup({
+          scopes: ["Files.Read.All", "User.Read"]
+        });
+        accessToken = resp.accessToken;
+        document.getElementById("status").textContent =
+          `✅ Sesión: ${resp.account.username}`;
+      } catch (err) {
+        console.error(err);
+        alert("Error de login:\n" + err.message);
+      }
+    }
+
+    document.getElementById("btnLogin").onclick = signIn;
+
+    // ───── formulario de procesado ─────
+    document.getElementById("formUp").onsubmit = async ev => {
+      ev.preventDefault();
+      if (!accessToken) {
+        alert("Primero inicia sesión.");
+        return;
+      }
+
+      const fd = new FormData(ev.target);
+      // opcional: enviar el token al backend si vas a leer OneDrive ahí
+      // fd.append("msToken", accessToken);
+
+      // Información de progreso visual
+      document.getElementById("status").textContent = "⬆️ Subiendo…";
+
+      const res = await fetch("/api/process.py", { method:"POST", body: fd });
+      if (!res.ok) {
+        const txt = await res.text();
+        alert("Error servidor:\n" + txt);
+        document.getElementById("status").textContent = "❌ Error";
+        return;
+      }
+
+      document.getElementById("status").textContent = "⬇️ Descargando resultado…";
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url;
+      a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      document.getElementById("status").textContent = "✅ Listo";
+    };
+  </script>
+</body>
+</html>
 
