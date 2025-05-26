@@ -1,11 +1,15 @@
 {
   "version": 2,
+
   "builds": [
-    { "src": "api/process.py", "use": "@vercel/python", "config": { "runtime": "python3.9" } },
-    { "src": "public/**/*",   "use": "@vercel/static"  }
+    { "src": "api/**/*.py",  "use": "@vercel/python", "config": { "runtime": "python3.9" } },
+    { "src": "api/config.js","use": "@vercel/node"   },
+    { "src": "public/**/*",  "use": "@vercel/static" }
   ],
+
   "routes": [
-    { "src": "/api/process", "dest": "api/process.py" },
-    { "src": "/(.*)",        "dest": "/public/index.html" }
+    { "src": "/api/config.js", "dest": "/api/config.js" },   // ← servír tal cual
+    { "src": "/api/(.*)",      "dest": "/api/$1.py"      },   // solo .py al resto
+    { "src": "/(.*)",          "dest": "/public/$1"      }
   ]
 }
