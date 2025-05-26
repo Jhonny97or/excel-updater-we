@@ -1,29 +1,25 @@
-// /api/config.js   — handler Node para Vercel
-export default function handler(req, res) {
-  const { AZURE_CLIENT_ID, AZURE_TENANT_ID } = process.env;
+// api/config.js
+export default function handler(request, response) {
+  try {
+    const cfg = {
+      clientId: process.env.AZURE_CLIENT_ID,
+      tenantId: process.env.AZURE_TENANT_ID,
+      authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+      scopes:  ["Files.Read.All"]        // lo mismo que pediste en Azure
+    };
 
-  /* ── valida que las env-vars existan ───────────────────────── */
-  if (!AZURE_CLIENT_ID || !AZURE_TENANT_ID) {
-    console.error("⛔  AZURE env vars missing", {
-      AZURE_CLIENT_ID,
-      AZURE_TENANT_ID,
-    });
-    return res
-      .status(500)
-      .send("❌ Variables de entorno faltantes en Vercel");
-  }
+    if (!cfg.clientId || !cfg.tenantId) {
+      throw new Error("Env vars missing");
+    }
 
-  const authority =
-    "https://login.microsoftonline.com/" + AZURE_TENANT_ID + "/";
-
-  /* ── responde JavaScript que el front lee directamente ─────── */
-  res
-    .setHeader("Content-Type", "application/javascript")
-    .send(
-      `window.EXCEL_UP_CFG = ${JSON.stringify({
-        clientId: AZURE_CLIENT_ID,
-        authority,
-      })};`
+    response.setHeader("Cache-Control", "public, max-age=3600");
+    response.setHeader("Content-Type", "application/javascript");
+    response.status(200).send(
+      `window.EXCEL_UP_CFG = ${JSON.stringify(cfg)};`
     );
+  } catch (err) {
+    response.status(500).send("config error: " + err.message);
+  }
 }
+
 
