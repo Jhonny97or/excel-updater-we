@@ -1,24 +1,30 @@
-# api/config.js  (sí, la extensión sigue siendo .js para que el
-# navegador lo interprete; Vercel lo ejecuta con python gracias a la
-# build @vercel/python).
+// api/config.js
+/**
+ * Devuelve la configuración MSAL al front-end
+ * (los valores se insertan desde las variables de entorno de Vercel)
+ */
 
-from vercel import VercelRequest, VercelResponse
-import os, json
+export default function handler(req, res) {
+  const { AZURE_CLIENT_ID, AZURE_TENANT_ID } = process.env;
 
-def handler(req: VercelRequest) -> VercelResponse:
-    """
-    Genera un pequeño archivo JavaScript que define window.EXCEL_UP_CFG
-    con los valores de tus variables de entorno.
-    """
-    cfg = {
-        "clientId":   os.environ.get("AZURE_CLIENT_ID", ""),
-        "tenantId":   os.environ.get("AZURE_TENANT_ID", ""),
-        # authority = https://login.microsoftonline.com/<TENANT_ID>
-        "authority":  f"https://login.microsoftonline.com/{os.environ.get('AZURE_TENANT_ID', '')}"
-    }
-    js = "window.EXCEL_UP_CFG = " + json.dumps(cfg, indent=2) + ";"
-    return VercelResponse(
-        js,
-        status=200,
-        headers={"Content-Type": "application/javascript"}
-    )
+  if (!AZURE_CLIENT_ID || !AZURE_TENANT_ID) {
+    return res
+      .status(500)
+      .setHeader("Content-Type", "text/plain")
+      .end("❌ Falta configurar AZURE_CLIENT_ID o AZURE_TENANT_ID en Vercel");
+  }
+
+  /* authority v2: https://login.microsoftonline.com/<tenant>/ */
+  const authority =
+    "https://login.microsoftonline.com/" + AZURE_TENANT_ID + "/";
+
+  res
+    .status(200)
+    .setHeader("Content-Type", "application/javascript")
+    .end(
+      `window.EXCEL_UP_CFG = ${JSON.stringify({
+        clientId: AZURE_CLIENT_ID,
+        authority,
+      })};`
+    );
+}
