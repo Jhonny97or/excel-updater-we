@@ -1,114 +1,49 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
-<meta charset="utf-8">
-<title>Actualizador Inventario (OneDrive)</title>
-<style>
- body{font-family:system-ui;margin:2rem} progress{width:100%;height:18px}
- #log{background:#f5f5f5;border:1px solid #ccc;padding:.5rem;height:90px;overflow:auto}
-</style>
-<script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
-<script>
-/*  1) Config MSAL desde variables de entorno  */
-window.EXCEL_UP_CFG = {
-  clientId : "{{NEXT_PUBLIC_AZURE_CLIENT_ID}}",
-  authority: "https://login.microsoftonline.com/{{NEXT_PUBLIC_AZURE_TENANT_ID}}",
-  scopes   : ["Files.Read.All"]
-};
-</script>
+  <meta charset="UTF-8">
+  <title>Excel Updater</title>
 </head>
 <body>
-<h2>Actualizador Inventario (OneDrive)</h2>
+  <!-- ⬇️ IMPORTANTE: debe ir lo más arriba posible -->
+  <script src="/api/config.js"></script>
 
-<button id="loginBtn">Iniciar sesión</button>
-<button id="logoutBtn" style="display:none">Cerrar sesión</button>
-<br><br>
+  <h1>Actualizador Inventario</h1>
+  <form id="f">
+    Mes (YYYY-MM): <input name="period" required><br><br>
+    Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
+    Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
+    <button>Procesar</button>
+  </form>
 
-<form id="f" style="display:none">
-  Mes (YYYY-MM):
-  <input name="period" required value="2025-04"><br><br>
-  Inventario (.xlsx):
-  <input type="file" name="inv" accept=".xlsx" required><br><br>
-  Ventas (.xlsx):
-  <input type="file" name="ven" accept=".xlsx" required><br><br>
-  <button>Procesar</button>
-</form>
+  <div id="status"></div> <!-- pequeño área de estado -->
 
-<br>
-<progress id="bar" value="0" max="100" style="display:none"></progress>
-<pre id="log"></pre>
+  <script>
+    const $status = document.getElementById('status');
 
-<script>
-const log = msg => { const l=document.getElementById('log'); l.textContent += msg+"\n"; l.scrollTop=l.scrollHeight; };
+    document.getElementById("f").onsubmit = async e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      $status.textContent = "Subiendo archivos…";
 
-const msalInstance = new msal.PublicClientApplication({
-  auth: { clientId: EXCEL_UP_CFG.clientId, authority: EXCEL_UP_CFG.authority },
-  cache:{ cacheLocation:"sessionStorage" }
-});
-const loginRequest = { scopes: EXCEL_UP_CFG.scopes };
+      const r = await fetch("/api/process.py", { method:"POST", body:fd });
 
-const loginBtn  = document.getElementById('loginBtn');
-const logoutBtn = document.getElementById('logoutBtn');
-const form      = document.getElementById('f');
-const bar       = document.getElementById('bar');
+      if (!r.ok) {
+        $status.textContent = "Error: " + (await r.text());
+        return;
+      }
+      $status.textContent = "Procesando en el servidor…";
 
-async function ensureLogin(){
-  let acc = msalInstance.getAllAccounts()[0];
-  if(!acc){
-    acc = (await msalInstance.loginPopup(loginRequest)).account;
-    log("✅ Login: "+acc.username);
-    loginBtn.style.display="none";
-    logoutBtn.style.display="";
-    form.style.display="";
-  }
-  return acc;
-}
-
-loginBtn.onclick = ensureLogin;
-logoutBtn.onclick = () => {
-  msalInstance.logoutPopup();
-  loginBtn.style.display="";
-  logoutBtn.style.display="none";
-  form.style.display="none";
-};
-
-form.onsubmit = async ev => {
-  ev.preventDefault();
-  const acc = await ensureLogin();
-  if(!acc) return;
-
-  const fd = new FormData(form);
-  bar.value = 0; bar.style.display=""; log("Subiendo archivos… 0 %");
-
-  /* XMLHttpRequest para ver progreso */
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "/api/process");
-  xhr.upload.onprogress = e=>{
-    if(e.lengthComputable){
-      bar.value = e.loaded/e.total*100;
-      log(`Subiendo… ${bar.value.toFixed(0)} %`);
-    }
-  };
-  xhr.responseType = "blob";
-  xhr.onload = ()=>{
-    if(xhr.status!==200){
-      alert("Error servidor:\n"+xhr.responseText);
-      log("❌ "+xhr.responseText);
-      bar.style.display="none"; return;
-    }
-    log("Procesado ✔ – descargando archivo…");
-    const url = URL.createObjectURL(xhr.response);
-    const a   = document.createElement("a");
-    a.href=url;
-    a.download=`TblInventario_actualizado_${fd.get("period")}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
-    bar.style.display="none";
-  };
-  xhr.onerror = ()=>alert("Error de red");
-  xhr.send(fd);
-};
-</script>
+      const blob = await r.blob();
+      const url  = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+      $status.textContent = "✅ Archivo generado";
+    };
+  </script>
 </body>
 </html>
 
