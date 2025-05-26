@@ -8,8 +8,8 @@
   ],
 
   "routes": [
-    { "src": "/api/config.js", "dest": "/api/config.js" },   // ← servír tal cual
-    { "src": "/api/(.*)",      "dest": "/api/$1.py"      },   // solo .py al resto
+    { "src": "/api/config.js", "dest": "/api/config.js" },  
+    { "src": "/api/(.*)",      "dest": "/api/$1.py"      },   
     { "src": "/(.*)",          "dest": "/public/$1"      }
   ]
 }
