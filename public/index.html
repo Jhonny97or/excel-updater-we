@@ -1,28 +1,82 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>Excel Updater</title></head>
+<head>
+  <meta charset="UTF-8">
+  <title>Excel Updater</title>
+  <style>
+    #prog { width: 100%; display: none; margin-top: 1em; }
+    #error { color: red; margin-top: 1em; }
+  </style>
+</head>
 <body>
   <h1>Actualizador Inventario</h1>
+
   <form id="f">
     Mes (YYYY-MM): <input name="period" required><br><br>
     Inventario: <input type="file" name="inv" accept=".xlsx" required><br><br>
     Ventas:     <input type="file" name="ven" accept=".xlsx" required><br><br>
     <button>Procesar</button>
   </form>
+
+  <progress id="prog" max="100" value="0"></progress>
+  <div id="error"></div>
+
   <script>
-    document.querySelector("#f").onsubmit = async e => {
+    const form = document.getElementById("f");
+    const prog = document.getElementById("prog");
+    const err  = document.getElementById("error");
+
+    form.onsubmit = e => {
       e.preventDefault();
-      let fd = new FormData(e.target);
-      let r  = await fetch("/api/process.py", { method:"POST", body:fd });
-      if(!r.ok) return alert("Error: "+r.statusText);
-      let b = await r.blob(),
-          u = URL.createObjectURL(b),
-          a = document.createElement("a");
-      a.href = u;
-      a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(u);
+      err.textContent = "";
+      prog.value = 0;
+      prog.style.display = "block";
+
+      const fd  = new FormData(form);
+      const xhr = new XMLHttpRequest();
+
+      xhr.open("POST", "/api/process.py");
+
+      // Progreso de subida
+      xhr.upload.onprogress = ev => {
+        if (ev.lengthComputable) {
+          prog.value = ev.loaded / ev.total * 100;
+        }
+      };
+
+      // Progreso de descarga
+      xhr.onprogress = ev => {
+        if (ev.lengthComputable) {
+          // opcional: podrías combinar ambas fases
+          prog.value = 100 - (ev.loaded / ev.total * 100 * 0.5);
+        }
+      };
+
+      xhr.onload = () => {
+        prog.style.display = "none";
+        if (xhr.status === 200) {
+          const blob = xhr.response;
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          a.href     = url;
+          a.download = `TblInventario_actualizado_${fd.get("period")}.xlsx`;
+          a.click();
+          URL.revokeObjectURL(url);
+        } else {
+          err.textContent = `Error ${xhr.status}: ${xhr.responseText}`;
+        }
+      };
+
+      xhr.onerror = () => {
+        prog.style.display = "none";
+        err.textContent = "Error de red al intentar procesar.";
+      };
+
+      // indicar que queremos la respuesta como Blob
+      xhr.responseType = "blob";
+      xhr.send(fd);
     };
   </script>
 </body>
 </html>
+
